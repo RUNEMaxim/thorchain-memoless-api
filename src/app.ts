@@ -89,6 +89,12 @@ export class MemolessApiApplication {
       allowedHeaders: ['Content-Type', 'Authorization']
     }));
 
+    // Behind a hosting proxy (Railway, Render, Fly ...) every request otherwise shares the
+    // proxy's IP, so all users would fall into ONE rate-limit bucket. TRUST_PROXY=1 fixes that.
+    if (process.env.TRUST_PROXY) {
+      this.app.set('trust proxy', Number(process.env.TRUST_PROXY) || process.env.TRUST_PROXY);
+    }
+
     // Rate limiting
     const limiter = rateLimit({
       windowMs: 15 * 60 * 1000, // 15 minutes
@@ -101,6 +107,17 @@ export class MemolessApiApplication {
       }
     });
     this.app.use(limiter);
+
+    // Optional API key. If API_KEY is set, every /api request must send it in the
+    // "x-api-key" header. Without it, anyone who finds the URL can register memos and
+    // spend the hot wallet's RUNE. /health stays open for platform health checks.
+    const apiKey = process.env.API_KEY;
+    if (apiKey) {
+      this.app.use('/api', (req, res, next) => {
+        if (req.get('x-api-key') === apiKey) return next();
+        res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Missing or invalid API key' } });
+      });
+    }
 
     // Body parsing
     this.app.use(express.json({ limit: '10mb' }));
